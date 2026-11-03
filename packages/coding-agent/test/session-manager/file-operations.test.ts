@@ -8,6 +8,7 @@ import {
 	mkdtempSync,
 	openSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 	writeSync,
@@ -490,6 +491,39 @@ describe("SessionManager session file creation", () => {
 
 		const reopened = SessionManager.open(file, tempDir);
 		expect(reopened.getBranch().map((entry) => entry.id)).toEqual([firstId, secondId]);
+	});
+
+	it.each(["ancestor", "root"])("preserves the active branch when writing a summary to %s fails", (target) => {
+		const sessionDir = join(tempDir, "sessions");
+		const unavailableDir = join(tempDir, "sessions-unavailable");
+		const session = SessionManager.create(tempDir, sessionDir);
+		const firstId = session.appendMessage(userMsg("first question"));
+		const previousLeafId = session.appendMessage(assistantMsg("first answer"));
+		const file = session.getSessionFile()!;
+		const entriesBefore = session.getEntries();
+		const contextBefore = session.buildSessionContext();
+		const contentBefore = readFileSync(file, "utf8");
+
+		// Make the append fail without relying on platform-specific file permissions.
+		renameSync(sessionDir, unavailableDir);
+		try {
+			expect(() => session.branchWithSummary(target === "ancestor" ? firstId : null, "branch summary")).toThrow(
+				/ENOENT/,
+			);
+		} finally {
+			renameSync(unavailableDir, sessionDir);
+		}
+
+		expect(session.getLeafId()).toBe(previousLeafId);
+		expect(session.getEntries()).toEqual(entriesBefore);
+		expect(session.buildSessionContext()).toEqual(contextBefore);
+		expect(readFileSync(file, "utf8")).toBe(contentBefore);
+
+		const nextId = session.appendMessage(userMsg("continue the original branch"));
+		expect(session.getEntry(nextId)?.parentId).toBe(previousLeafId);
+		const reopened = SessionManager.open(file, sessionDir);
+		expect(reopened.getBranch().map((entry) => entry.id)).toEqual([firstId, previousLeafId, nextId]);
+		expect(reopened.buildSessionContext()).toEqual(session.buildSessionContext());
 	});
 
 	it("does not keep an entry in memory when creating the file fails", () => {
