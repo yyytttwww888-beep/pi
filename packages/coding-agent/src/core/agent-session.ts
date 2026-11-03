@@ -1153,6 +1153,11 @@ export class AgentSession {
 					}
 				}
 			}
+			// Normalize at delivery so queued images use the current model's limits without
+			// delaying enqueueing. Events and persisted history must see the processed content.
+			if (typeof event.message.content !== "string") {
+				event.message.content = await this._normalizeUserMessageImages(event.message.content);
+			}
 		}
 
 		// Emit to extensions first, then notify public listeners.
@@ -1966,14 +1971,9 @@ export class AgentSession {
 		if (trigger.messageType === "custom") {
 			messages.push(trigger.message);
 		} else {
-			// Normalize images after before_agent_start so extension-driven model selection
-			// determines the resize profile used for the request and history.
-			const normalized = await this._normalizePromptImages(trigger.images);
-			const text =
-				normalized.hints.length > 0 ? `${trigger.prompt}\n\n${normalized.hints.join("\n")}` : trigger.prompt;
 			messages.push({
 				role: "user",
-				content: [{ type: "text", text }, ...normalized.images],
+				content: [{ type: "text", text: trigger.prompt }, ...(trigger.images ?? [])],
 				timestamp: Date.now(),
 			});
 		}
@@ -2079,26 +2079,31 @@ export class AgentSession {
 		return { text, images };
 	}
 
-	private async _normalizePromptImages(
-		images: ImageContent[] | undefined,
-	): Promise<{ images: ImageContent[]; hints: string[] }> {
-		if (!images) return { images: [], hints: [] };
+	private async _normalizeUserMessageImages(
+		content: (TextContent | ImageContent)[],
+	): Promise<(TextContent | ImageContent)[]> {
+		if (!content.some((block) => block.type === "image")) return content;
 
-		const normalizedImages: ImageContent[] = [];
-		const hints: string[] = [];
-		for (const image of images) {
-			const processed = await processImage(Buffer.from(image.data, "base64"), image.mimeType, {
+		const normalized: (TextContent | ImageContent)[] = [];
+		for (const block of content) {
+			if (block.type === "text") {
+				normalized.push(block);
+				continue;
+			}
+			const processed = await processImage(Buffer.from(block.data, "base64"), block.mimeType, {
 				autoResizeImages: this.settingsManager.getImageAutoResize(),
 				resizeOptions: this._limitsModel()?.inputLimits?.images?.resize,
 			});
 			if (!processed.ok) {
-				hints.push(processed.message);
+				normalized.push({ type: "text", text: processed.message });
 				continue;
 			}
-			normalizedImages.push({ type: "image", data: processed.data, mimeType: processed.mimeType });
-			hints.push(...processed.hints);
+			normalized.push({ type: "image", data: processed.data, mimeType: processed.mimeType });
+			if (processed.hints.length > 0) {
+				normalized.push({ type: "text", text: processed.hints.join("\n") });
+			}
 		}
-		return { images: normalizedImages, hints };
+		return normalized;
 	}
 
 	/**
