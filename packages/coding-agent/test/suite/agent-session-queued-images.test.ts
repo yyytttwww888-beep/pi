@@ -41,6 +41,7 @@ describe("AgentSession queued images", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
+	// Regression for #11738: queued images must be normalized before persistence and provider requests.
 	for (const entryPoint of ["prompt", "queue"] as const) {
 		it.each(["steer", "followUp"] as const)(
 			`${entryPoint}: normalizes %s images before history and requests`,
