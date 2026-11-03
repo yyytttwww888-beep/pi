@@ -493,6 +493,7 @@ describe("SessionManager session file creation", () => {
 		expect(reopened.getBranch().map((entry) => entry.id)).toEqual([firstId, secondId]);
 	});
 
+	// #11718: a failed branch-summary write must preserve the original leaf, not the destination.
 	it.each(["ancestor", "root"])("preserves the active branch when writing a summary to %s fails", (target) => {
 		const sessionDir = join(tempDir, "sessions");
 		const unavailableDir = join(tempDir, "sessions-unavailable");
